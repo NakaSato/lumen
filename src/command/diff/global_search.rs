@@ -316,7 +316,7 @@ impl GlobalSearchState {
                 return Vec::new();
             }
             self.highlight_cache
-                .request(key, Arc::clone(content), &file.filename);
+                .request(key, || Arc::clone(content), &file.filename);
         }
         Vec::new()
     }

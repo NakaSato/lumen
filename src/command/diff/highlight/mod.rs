@@ -99,6 +99,7 @@ pub struct FileHighlighter {
 
 impl FileHighlighter {
     /// Create a new FileHighlighter by analyzing the entire file content.
+    #[cfg(test)]
     pub fn new(content: &str, filename: &str) -> Self {
         Self::from_shared(Arc::from(content), filename)
     }

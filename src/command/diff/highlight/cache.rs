@@ -108,8 +108,13 @@ impl HighlightCache {
     /// Queue a background parse for `key` unless it is already cached or on
     /// its way. Latest file wins: queued parses for other files are dropped,
     /// so skimming through many files doesn't leave a backlog behind the one
-    /// the user stopped on.
-    pub fn request(&self, key: HighlightKey, content: Arc<str>, filename: &str) {
+    /// the user stopped on. `content` is only called if a parse is queued.
+    pub fn request(
+        &self,
+        key: HighlightKey,
+        content: impl FnOnce() -> Arc<str>,
+        filename: &str,
+    ) {
         if self.ready.borrow().contains_key(&key) || !self.pending.borrow_mut().insert(key) {
             return;
         }
@@ -127,7 +132,7 @@ impl HighlightCache {
             queue.jobs.push(Job {
                 generation: self.generation.get(),
                 key,
-                content,
+                content: content(),
                 filename: filename.to_string(),
             });
         }
@@ -233,7 +238,7 @@ mod tests {
         assert!(cache.get((0, true)).is_none());
         assert!(!cache.has_pending());
 
-        cache.request((0, true), Arc::from(RUST), "a.rs");
+        cache.request((0, true), || Arc::from(RUST), "a.rs");
         let highlighter = wait_for(&cache, (0, true));
 
         assert!(!highlighter.get_line_spans(2, None).is_empty());
@@ -243,8 +248,8 @@ mod tests {
     #[test]
     fn sides_are_cached_independently() {
         let cache = new_cache();
-        cache.request((0, true), Arc::from(RUST), "a.rs");
-        cache.request((0, false), Arc::from("struct Old;\n"), "a.rs");
+        cache.request((0, true), || Arc::from(RUST), "a.rs");
+        cache.request((0, false), || Arc::from("struct Old;\n"), "a.rs");
 
         let new = wait_for(&cache, (0, true));
         let old = wait_for(&cache, (0, false));
@@ -256,17 +261,17 @@ mod tests {
     #[test]
     fn clear_drops_cached_and_in_flight_results() {
         let cache = new_cache();
-        cache.request((0, true), Arc::from(RUST), "a.rs");
+        cache.request((0, true), || Arc::from(RUST), "a.rs");
         wait_for(&cache, (0, true));
 
-        cache.request((1, true), Arc::from(RUST), "b.rs");
+        cache.request((1, true), || Arc::from(RUST), "b.rs");
         let before = cache.generation();
         cache.clear();
 
         assert_ne!(cache.generation(), before);
         assert!(!cache.has_pending());
         // Give a parse that was already running time to report back.
-        cache.request((2, true), Arc::from(RUST), "c.rs");
+        cache.request((2, true), || Arc::from(RUST), "c.rs");
         wait_for(&cache, (2, true));
         assert!(cache.get((0, true)).is_none());
         assert!(cache.get((1, true)).is_none());
@@ -278,7 +283,7 @@ mod tests {
         let highlighter = Arc::new(FileHighlighter::new(RUST, "a.rs"));
         cache.insert((3, false), Arc::clone(&highlighter));
 
-        cache.request((3, false), Arc::from(RUST), "a.rs");
+        cache.request((3, false), || Arc::from(RUST), "a.rs");
 
         assert!(!cache.has_pending());
         assert!(Arc::ptr_eq(&cache.get((3, false)).unwrap(), &highlighter));
@@ -306,11 +311,11 @@ mod tests {
         // Whichever of these the worker hasn't picked up yet gets dropped by
         // the next request for a different file.
         for file in 0..20 {
-            cache.request((file, true), Arc::from(RUST), "a.rs");
+            cache.request((file, true), || Arc::from(RUST), "a.rs");
         }
         wait_until_idle(&cache);
 
-        cache.request((0, true), Arc::from(RUST), "a.rs");
+        cache.request((0, true), || Arc::from(RUST), "a.rs");
         wait_for(&cache, (0, true));
         wait_for(&cache, (19, true));
     }
