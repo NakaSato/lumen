@@ -24,6 +24,9 @@ struct Job {
     filename: String,
 }
 
+/// Highlighters kept before the least recently used one is evicted.
+const MAX_CACHED: usize = 64;
+
 type Done = (u64, HighlightKey, FileHighlighter);
 
 #[derive(Default)]
@@ -39,7 +42,9 @@ struct JobQueue {
 }
 
 pub struct HighlightCache {
-    ready: RefCell<HashMap<HighlightKey, Arc<FileHighlighter>>>,
+    /// Finished highlighters with the `clock` reading of their last use.
+    ready: RefCell<HashMap<HighlightKey, (Arc<FileHighlighter>, u64)>>,
+    clock: Cell<u64>,
     /// Queued or currently being parsed.
     pending: RefCell<HashSet<HighlightKey>>,
     /// Bumped by `clear`. File indices are only meaningful within one
@@ -56,6 +61,7 @@ impl Default for HighlightCache {
         let (results_tx, results_rx) = mpsc::channel();
         Self {
             ready: RefCell::new(HashMap::new()),
+            clock: Cell::new(0),
             pending: RefCell::new(HashSet::new()),
             generation: Cell::new(0),
             queue: Arc::new(JobQueue::default()),
@@ -74,12 +80,29 @@ impl HighlightCache {
     /// Look up a finished highlighter. Never blocks.
     pub fn get(&self, key: HighlightKey) -> Option<Arc<FileHighlighter>> {
         self.drain();
-        self.ready.borrow().get(&key).cloned()
+        let now = self.tick();
+        let mut ready = self.ready.borrow_mut();
+        let (highlighter, last_used) = ready.get_mut(&key)?;
+        *last_used = now;
+        Some(Arc::clone(highlighter))
     }
 
     /// Store a highlighter the caller built itself.
     pub fn insert(&self, key: HighlightKey, highlighter: Arc<FileHighlighter>) {
-        self.ready.borrow_mut().insert(key, highlighter);
+        let now = self.tick();
+        let mut ready = self.ready.borrow_mut();
+        if ready.len() >= MAX_CACHED && !ready.contains_key(&key) {
+            let oldest = ready.iter().min_by_key(|(_, (_, used))| *used).map(|(k, _)| *k);
+            if let Some(oldest) = oldest {
+                ready.remove(&oldest);
+            }
+        }
+        ready.insert(key, (highlighter, now));
+    }
+
+    fn tick(&self) -> u64 {
+        self.clock.set(self.clock.get() + 1);
+        self.clock.get()
     }
 
     /// Queue a background parse for `key` unless it is already cached or on
@@ -138,7 +161,7 @@ impl HighlightCache {
                 continue;
             }
             self.pending.borrow_mut().remove(&key);
-            self.ready.borrow_mut().insert(key, Arc::new(highlighter));
+            self.insert(key, Arc::new(highlighter));
         }
     }
 }
@@ -259,6 +282,22 @@ mod tests {
 
         assert!(!cache.has_pending());
         assert!(Arc::ptr_eq(&cache.get((3, false)).unwrap(), &highlighter));
+    }
+
+    #[test]
+    fn least_recently_used_highlighter_is_evicted() {
+        let cache = HighlightCache::default();
+        for file in 0..MAX_CACHED {
+            cache.insert((file, true), Arc::default());
+        }
+        // Touch the oldest so the second oldest becomes the eviction victim.
+        assert!(cache.get((0, true)).is_some());
+
+        cache.insert((MAX_CACHED, true), Arc::default());
+
+        assert!(cache.get((0, true)).is_some());
+        assert!(cache.get((1, true)).is_none());
+        assert!(cache.get((MAX_CACHED, true)).is_some());
     }
 
     #[test]

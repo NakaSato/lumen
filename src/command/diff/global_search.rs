@@ -20,6 +20,11 @@ use super::types::{ChangeType, DiffLine, DiffViewSettings, FileDiff};
 /// Maximum number of results shown in the list. Above this, the user should narrow the query.
 const MAX_RESULTS: usize = 500;
 
+/// Files larger than this are previewed without syntax colours unless the
+/// diff view has already parsed them. Parsing costs a few hundred ms of
+/// background CPU per MB, which isn't worth it for a glance at a few lines.
+const MAX_PREVIEW_HIGHLIGHT_BYTES: usize = 1024 * 1024;
+
 /// One searchable line in the global index.
 #[derive(Clone)]
 pub struct GlobalSearchEntry {
@@ -307,6 +312,9 @@ impl GlobalSearchState {
 
         if let Some(file) = self.files.get(file_index) {
             let content = if is_new { &file.new } else { &file.old };
+            if content.len() > MAX_PREVIEW_HIGHLIGHT_BYTES {
+                return Vec::new();
+            }
             self.highlight_cache
                 .request(key, Arc::clone(content), &file.filename);
         }
@@ -462,3 +470,65 @@ impl GlobalSearchState {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::command::diff::types::FileStatus;
+    use std::time::{Duration, Instant};
+
+    fn state_for(new_content: &str) -> (GlobalSearchState, Rc<HighlightCache>) {
+        crate::command::diff::highlight::init();
+        let files = [FileDiff {
+            filename: "src/lib.rs".to_string(),
+            old_content: String::new(),
+            new_content: new_content.to_string(),
+            status: FileStatus::Added,
+            is_binary: false,
+        }];
+        let cache = Rc::new(HighlightCache::default());
+        let state =
+            GlobalSearchState::build(&files, &DiffViewSettings::default(), Rc::clone(&cache));
+        (state, cache)
+    }
+
+    #[test]
+    fn preview_line_is_plain_until_background_parse_lands() {
+        let (state, cache) = state_for("fn main() {}\n");
+
+        assert!(state
+            .highlighted_line_spans(0, MatchPanel::New, 1, None)
+            .is_empty());
+        assert!(cache.has_pending());
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while cache.has_pending() {
+            assert!(Instant::now() < deadline, "highlighter never arrived");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let spans = state.highlighted_line_spans(0, MatchPanel::New, 1, None);
+        assert_eq!(spans[0].content, "fn");
+    }
+
+    #[test]
+    fn oversized_file_is_not_parsed_for_preview() {
+        let big = "fn a() {}\n".repeat(MAX_PREVIEW_HIGHLIGHT_BYTES / 10 + 1);
+        let (state, cache) = state_for(&big);
+
+        assert!(state
+            .highlighted_line_spans(0, MatchPanel::New, 1, None)
+            .is_empty());
+        assert!(!cache.has_pending());
+    }
+
+    #[test]
+    fn stale_snapshot_does_not_touch_cleared_cache() {
+        let (state, cache) = state_for("fn main() {}\n");
+        cache.clear();
+
+        assert!(state
+            .highlighted_line_spans(0, MatchPanel::New, 1, None)
+            .is_empty());
+        assert!(!cache.has_pending());
+    }
+}
