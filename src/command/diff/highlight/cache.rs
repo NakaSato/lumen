@@ -164,7 +164,7 @@ fn run_worker(queue: Arc<JobQueue>, results: Sender<Done>) {
                 state = queue.wake.wait(state).unwrap();
             }
         };
-        let highlighter = FileHighlighter::new(&job.content, &job.filename);
+        let highlighter = FileHighlighter::from_shared(job.content, &job.filename);
         if results.send((job.generation, job.key, highlighter)).is_err() {
             return;
         }
