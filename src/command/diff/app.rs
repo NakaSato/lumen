@@ -582,8 +582,14 @@ fn run_app_internal(
             state.editor_rect = editor_rect_cell.get();
         }
 
-        // Poll for new events if no pending events
-        if pending_events.is_empty() && event::poll(Duration::from_millis(100))? {
+        // Poll for new events if no pending events. While a background
+        // highlight is in flight, wake up sooner so it's drawn as it lands.
+        let poll_timeout = if state.highlight_cache.has_pending() {
+            Duration::from_millis(16)
+        } else {
+            Duration::from_millis(100)
+        };
+        if pending_events.is_empty() && event::poll(poll_timeout)? {
             pending_events.push_back(event::read()?);
         }
 
@@ -1997,6 +2003,7 @@ fn run_app_internal(
                             let gs = crate::command::diff::render::GlobalSearchState::build(
                                 &state.file_diffs,
                                 &state.settings,
+                                std::rc::Rc::clone(&state.highlight_cache),
                             );
                             active_modal = Some(Modal::global_search("Search", gs));
                         }

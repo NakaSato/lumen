@@ -1,11 +1,12 @@
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 use std::time::SystemTime;
 
 use tree_sitter::{Parser, Tree};
 
 use crate::command::diff::context::get_language_context;
 use crate::command::diff::diff_algo::{compute_side_by_side, count_added_removed, find_hunk_starts};
-use crate::command::diff::highlight::FileHighlighter;
+use crate::command::diff::highlight::{FileHighlighter, HighlightCache};
 
 use crate::command::diff::search::SearchState;
 use crate::command::diff::types::{
@@ -203,6 +204,9 @@ pub struct AppState {
     cached_total_lines: Option<(usize, usize)>,
     /// Cached syntax highlighters for current file (avoids re-parsing with tree-sitter every frame)
     cached_highlighters: Option<(usize, FileHighlighter, FileHighlighter)>,
+    /// Highlighters for any file, parsed in the background. Shared with the
+    /// global search preview; cleared whenever `file_diffs` is replaced.
+    pub highlight_cache: Rc<HighlightCache>,
     /// Cached parsed syntax tree
     pub cached_trees: TreeCache,
     /// Whether search matches need to be recomputed
@@ -322,6 +326,7 @@ impl AppState {
             cached_hunks: None,
             cached_total_lines: None,
             cached_highlighters: None,
+            highlight_cache: Rc::default(),
             cached_trees: TreeCache::default(),
             search_dirty: true,
             content_row_offset: 0,
@@ -802,6 +807,7 @@ impl AppState {
         }
 
         self.file_diffs = file_diffs;
+        self.highlight_cache.clear();
         let (total_added, total_removed) = compute_total_line_stats(&self.file_diffs);
         self.total_added = total_added;
         self.total_removed = total_removed;

@@ -1,3 +1,4 @@
+mod cache;
 mod config;
 mod queries;
 
@@ -9,6 +10,8 @@ use tree_sitter_highlight::{HighlightEvent, Highlighter};
 
 use super::theme;
 use config::{LanguageConfig, CONFIGS, HIGHLIGHT_NAMES};
+
+pub use cache::HighlightCache;
 
 pub fn highlight_color(index: usize) -> Color {
     let t = theme::get();
