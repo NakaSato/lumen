@@ -1405,6 +1405,20 @@ fn run_app_internal(
                             state.diff_fullscreen = DiffFullscreen::None;
                             state.mark_search_dirty();
                         }
+                        // Cmd+↓ / Cmd+↑ — scroll the diff by a full window, keeping
+                        // two lines of overlap for context. Terminals report Cmd as
+                        // SUPER (kitty protocol) or META.
+                        KeyCode::Down | KeyCode::Up
+                            if key.modifiers.contains(KeyModifiers::SUPER)
+                                || key.modifiers.contains(KeyModifiers::META) =>
+                        {
+                            let window = visible_height.saturating_sub(2).max(1) as u16;
+                            state.scroll = if key.code == KeyCode::Down {
+                                state.scroll.saturating_add(window).min(max_scroll as u16)
+                            } else {
+                                state.scroll.saturating_sub(window)
+                            };
+                        }
                         KeyCode::Down
                             if state.search_state.has_query()
                                 && state.focused_panel == FocusedPanel::DiffView =>
@@ -2051,6 +2065,10 @@ fn run_app_internal(
                                             KeyBind {
                                                 key: "ctrl+d / ctrl+u",
                                                 description: "Scroll half page down / up",
+                                            },
+                                            KeyBind {
+                                                key: "cmd+down / cmd+up",
+                                                description: "Scroll full window down / up",
                                             },
                                             KeyBind {
                                                 key: "ctrl+p",
