@@ -206,10 +206,10 @@ mod tests {
 
     const RUST: &str = "fn main() {\n    let x = 42;\n}\n";
 
-    /// Compiling the language configs takes seconds in a debug build; do it
-    /// up front so the deadlines below only cover the parse itself.
+    /// Compiling a highlight query is slow in a debug build; do it up front
+    /// so the deadlines below only cover the parse itself.
     fn new_cache() -> HighlightCache {
-        crate::command::diff::highlight::init();
+        crate::command::diff::highlight::preload("a.rs");
         HighlightCache::default()
     }
 

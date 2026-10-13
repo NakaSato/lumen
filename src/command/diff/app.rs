@@ -40,7 +40,6 @@ use super::coordinates::{extract_selected_text, PanelLayout};
 use super::git::{
     get_current_branch, load_file_diffs, load_pr_file_diffs, load_single_commit_diffs,
 };
-use super::highlight;
 use super::render::{
     render_diff, render_empty_state, truncate_path, FilePickerItem, KeyBind, KeyBindSection, Modal,
     ModalContent, ModalFileStatus, ModalResult,
@@ -301,7 +300,6 @@ fn run_app_internal(
     backend: &dyn VcsBackend,
 ) -> io::Result<()> {
     theme::init(options.theme.as_deref());
-    highlight::init();
 
     // Initialize state before TUI so we can sync viewed files
     let mut state = AppState::new(file_diffs, options.focus.as_deref());

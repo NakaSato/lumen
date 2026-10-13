@@ -1047,7 +1047,7 @@ mod tests {
 
     #[test]
     fn highlighters_come_from_shared_cache_without_blocking() {
-        crate::command::diff::highlight::init();
+        crate::command::diff::highlight::preload("a.rs");
         let mut state = AppState::new(vec![make_file_diff("a.rs"), make_file_diff("b.rs")], None);
         let current = state.current_file;
         let preparsed = Arc::new(FileHighlighter::default());

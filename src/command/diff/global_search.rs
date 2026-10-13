@@ -478,7 +478,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     fn state_for(new_content: &str) -> (GlobalSearchState, Rc<HighlightCache>) {
-        crate::command::diff::highlight::init();
+        crate::command::diff::highlight::preload("a.rs");
         let files = [FileDiff {
             filename: "src/lib.rs".to_string(),
             old_content: String::new(),
