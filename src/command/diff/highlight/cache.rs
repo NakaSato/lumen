@@ -77,6 +77,11 @@ impl HighlightCache {
         self.ready.borrow().get(&key).cloned()
     }
 
+    /// Store a highlighter the caller built itself.
+    pub fn insert(&self, key: HighlightKey, highlighter: Arc<FileHighlighter>) {
+        self.ready.borrow_mut().insert(key, highlighter);
+    }
+
     /// Queue a background parse for `key` unless it is already cached or on
     /// its way. Latest file wins: queued parses for other files are dropped,
     /// so skimming through many files doesn't leave a backlog behind the one
@@ -242,6 +247,18 @@ mod tests {
         wait_for(&cache, (2, true));
         assert!(cache.get((0, true)).is_none());
         assert!(cache.get((1, true)).is_none());
+    }
+
+    #[test]
+    fn inserted_highlighter_is_returned_without_a_parse() {
+        let cache = new_cache();
+        let highlighter = Arc::new(FileHighlighter::new(RUST, "a.rs"));
+        cache.insert((3, false), Arc::clone(&highlighter));
+
+        cache.request((3, false), Arc::from(RUST), "a.rs");
+
+        assert!(!cache.has_pending());
+        assert!(Arc::ptr_eq(&cache.get((3, false)).unwrap(), &highlighter));
     }
 
     #[test]

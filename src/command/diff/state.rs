@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use tree_sitter::{Parser, Tree};
@@ -203,7 +204,7 @@ pub struct AppState {
     /// Cached total line count for current file (avoids recomputing diff for max_scroll)
     cached_total_lines: Option<(usize, usize)>,
     /// Cached syntax highlighters for current file (avoids re-parsing with tree-sitter every frame)
-    cached_highlighters: Option<(usize, FileHighlighter, FileHighlighter)>,
+    cached_highlighters: Option<(usize, Arc<FileHighlighter>, Arc<FileHighlighter>)>,
     /// Highlighters for any file, parsed in the background. Shared with the
     /// global search preview; cleared whenever `file_diffs` is replaced.
     pub highlight_cache: Rc<HighlightCache>,
@@ -503,9 +504,19 @@ impl AppState {
             None => true,
         };
         if needs_recompute {
+            // Reuse whatever the search preview already parsed for this file,
+            // and leave ours behind for it.
             let diff = &self.file_diffs[current];
-            let old_hl = FileHighlighter::new(&diff.old_content, &diff.filename);
-            let new_hl = FileHighlighter::new(&diff.new_content, &diff.filename);
+            let cache = &self.highlight_cache;
+            let side = |is_new: bool, content: &str| {
+                cache.get((current, is_new)).unwrap_or_else(|| {
+                    let hl = Arc::new(FileHighlighter::new(content, &diff.filename));
+                    cache.insert((current, is_new), Arc::clone(&hl));
+                    hl
+                })
+            };
+            let old_hl = side(false, &diff.old_content);
+            let new_hl = side(true, &diff.new_content);
             self.cached_highlighters = Some((current, old_hl, new_hl));
         }
         let (_, old_hl, new_hl) = self.cached_highlighters.as_ref().unwrap();
@@ -517,7 +528,7 @@ impl AppState {
     pub fn highlighters_ref(&self) -> Option<(&FileHighlighter, &FileHighlighter)> {
         self.cached_highlighters
             .as_ref()
-            .map(|(_, old_hl, new_hl)| (old_hl, new_hl))
+            .map(|(_, old_hl, new_hl)| (old_hl.as_ref(), new_hl.as_ref()))
     }
 
     /// Invalidate the cache (call when file changes)
@@ -1023,6 +1034,26 @@ mod tests {
             status: FileStatus::Added,
             is_binary: false,
         }
+    }
+
+    #[test]
+    fn highlighters_are_shared_with_cache_and_dropped_on_reload() {
+        let mut state = AppState::new(vec![make_file_diff("a.rs"), make_file_diff("b.rs")], None);
+        let current = state.current_file;
+        let preparsed = Arc::new(FileHighlighter::default());
+        state
+            .highlight_cache
+            .insert((current, true), Arc::clone(&preparsed));
+
+        let (_, new_hl) = state.get_highlighters();
+
+        assert!(std::ptr::eq(new_hl, preparsed.as_ref()));
+        assert!(state.highlight_cache.get((current, false)).is_some());
+
+        state.reload(vec![make_file_diff("a.rs")], None);
+
+        assert!(state.highlight_cache.get((current, false)).is_none());
+        assert!(state.highlight_cache.get((current, true)).is_none());
     }
 
     #[test]
